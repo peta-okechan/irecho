@@ -6,6 +6,7 @@
 
 使用非標準ライブラリ
 PySerial ( pip install pyserial )
+zc.lockfile ( pip install zc.lockfile )
 '''
 
 import argparse
@@ -14,6 +15,7 @@ import time
 import sqlite3
 import re
 import os
+import zc.lockfile
 
 ser = serial.Serial()
 default_database = os.path.abspath(
@@ -108,6 +110,28 @@ def list_signals(conn):
     return cur.fetchall()
 
 
+def acquire_lock(func):
+    def inner(*args, **kwargs):
+        import logging
+        logger = logging.getLogger("zc.lockfile")
+        logger.setLevel(logging.CRITICAL)
+        s = time.time()
+        lock = None
+        while time.time() - s < 5.0:
+            try:
+                lock = zc.lockfile.LockFile('lock')
+                break
+            except zc.lockfile.LockError:
+                time.sleep(0.1)
+        if lock:
+            func(*args, **kwargs)
+            lock.close()
+        else:
+            raise Exception('LockError!')
+    return inner
+
+
+@acquire_lock
 def cmd_recv(args):
     serial_open(args)
     data = do_recv()
@@ -119,6 +143,7 @@ def cmd_recv(args):
         print('signal({}) saved.'.format(args.name))
 
 
+@acquire_lock
 def cmd_send(args):
     conn = get_db_connection(args.database)
     signal = get_signal(conn, args.name)
@@ -161,9 +186,9 @@ def is_idle():
 
 
 def when_idle(func):
-    def inner(*args):
+    def inner(*args, **kwargs):
         if is_idle():
-            return func(*args)
+            return func(*args, **kwargs)
     return inner
 
 
